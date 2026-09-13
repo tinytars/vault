@@ -56,10 +56,12 @@ jobs:
         with:
           fetch-depth: 2
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-base-action@v0.0.63
+        env:
+          GH_TOKEN: ${{ github.token }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: '--allowedTools "Read,Grep,Glob,Bash(git show:*),Bash(gh api repos/*/commits/*/comments:*)"'
+          allowed_tools: "Read,Grep,Glob,Bash(git show:*),Bash(gh api repos/*/commits/*/comments:*)"
           prompt: |
             A commit was just pushed directly to main, bypassing PR review.
             Review its diff with `git show HEAD`. Only if you find a blocking
@@ -77,6 +79,7 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           title="Claude PR review workflow failed"
           body="Failed run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
