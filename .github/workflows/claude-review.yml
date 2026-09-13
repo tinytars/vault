@@ -61,6 +61,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: "claude-sonnet-5"
           allowed_tools: "Read,Grep,Glob,Bash(git show:*),Bash(gh api repos/*/commits/*/comments:*)"
           prompt: |
             A commit was just pushed directly to main, bypassing PR review.
