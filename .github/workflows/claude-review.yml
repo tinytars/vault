@@ -56,7 +56,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: anthropics/claude-code-base-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: '--allowedTools "Read,Grep,Glob,Bash(git show:*),Bash(gh api repos/*/commits/*/comments:*)"'
@@ -81,9 +81,9 @@ jobs:
           title="Claude PR review workflow failed"
           body="Failed run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           Event: ${{ github.event_name }}, ref: ${{ github.ref }}, sha: ${{ github.sha }}"
-          existing=$(gh issue list --search "$title in:title" --state open --json number --jq '.[0].number // empty')
+          existing=$(gh issue list -R ${{ github.repository }} --search "$title in:title" --state open --json number --jq '.[0].number // empty')
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
+            gh issue comment "$existing" -R ${{ github.repository }} --body "$body"
           else
-            gh issue create --title "$title" --body "$body" --assignee pablo-tech
+            gh issue create -R ${{ github.repository }} --title "$title" --body "$body" --assignee pablo-tech
           fi
