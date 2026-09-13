@@ -1,0 +1,89 @@
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  pr-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: '--allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr checks:*),Bash(gh pr merge:*)"'
+          prompt: |
+            Review this pull request for correctness bugs and for
+            reuse/simplification/efficiency issues, at the same bar as
+            `/code-review` run at high effort. Read the diff with `gh pr diff`.
+
+            - If there are no blocking issues: wait for CI with
+              `gh pr checks --watch --required` (only the required checks —
+              this job itself is not one of them, so watching all checks
+              would wait on itself forever). If checks pass, approve with
+              `gh pr review --approve -b "<one-line summary of what you
+              checked>"`, then run `gh pr merge --auto --squash --delete-branch`.
+              If checks are red, comment that CI is failing and stop — do not
+              approve or merge.
+            - If there are blocking issues: post them as one review comment
+              with `gh pr comment` (most severe first, with file:line
+              references) and do not approve or merge.
+            - If you are not confident in the verdict, say so in a comment and
+              leave the PR for a human — do not approve or merge.
+
+  push-audit:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: '--allowedTools "Read,Grep,Glob,Bash(git show:*),Bash(gh api repos/*/commits/*/comments:*)"'
+          prompt: |
+            A commit was just pushed directly to main, bypassing PR review.
+            Review its diff with `git show HEAD`. Only if you find a blocking
+            correctness bug, post a commit comment explaining it with
+            `gh api repos/${{ github.repository }}/commits/${{ github.sha }}/comments -f body="..."`.
+            Say nothing and take no action if the commit looks fine — this is
+            an audit pass, not a gate, since the commit is already merged.
+
+  notify-failure:
+    needs: [pr-review, push-audit]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Claude PR review workflow failed"
+          body="Failed run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Event: ${{ github.event_name }}, ref: ${{ github.ref }}, sha: ${{ github.sha }}"
+          existing=$(gh issue list --search "$title in:title" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --assignee pablo-tech
+          fi
