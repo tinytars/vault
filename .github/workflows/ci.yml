@@ -22,6 +22,17 @@ jobs:
       - run: npm test
       - run: npm run typecheck
 
+  autopilot-guard:
+    # The rules are in .github/autopilot.json. Which pull requests it applies to is an input, not a
+    # job-level `if:`: a required check that reports SKIPPED blocks the merge forever.
+    if: github.event_name == 'pull_request'
+    uses: promontory-studio/pedalion/.github/workflows/guard.yml@e4e338d845be827465c177aefed794a2566af1cb
+    with:
+      base-ref: ${{ github.base_ref }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
+      authors: plover-autopilot[bot],pedalion[bot],dependabot[bot]
+      pr-author: ${{ github.event.pull_request.user.login }}
+
   release:
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -68,3 +79,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "v${{ steps.bump.outputs.version }}" --generate-notes
+
+  notify-failure:
+    needs: [test, release]
+    if: always() && github.event_name == 'push' && contains(needs.*.result, 'failure')
+    permissions:
+      issues: write
+    uses: promontory-studio/pedalion/.github/workflows/notify-failure.yml@e4e338d845be827465c177aefed794a2566af1cb
+    with:
+      title: CI failed on main
+      context: A push to main did not build, test or release, so the published package no longer matches main.
+      assignee: pablo-tech
