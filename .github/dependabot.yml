@@ -1,10 +1,22 @@
 version: 2
+# One grouped pull request per ecosystem per week is the normal case; the cap is what keeps a
+# missed week from compounding into a backlog.
 updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      # Majors are grouped here too: an action pin merges on green with no model either way, so a
+      # separate pull request per major buys nothing but CI minutes.
+      actions:
+        patterns: ["*"]
