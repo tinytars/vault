@@ -26,7 +26,7 @@ jobs:
     # The rules are in .github/autopilot.json. Which pull requests it applies to is an input, not a
     # job-level `if:`: a required check that reports SKIPPED blocks the merge forever.
     if: github.event_name == 'pull_request'
-    uses: promontory-studio/pedalion/.github/workflows/guard.yml@e4e338d845be827465c177aefed794a2566af1cb
+    uses: promontory-studio/pedalion/.github/workflows/guard.yml@0185de09d9447da6d439a1f0823c1631a5c0eb25 # v1.0.0
     with:
       base-ref: ${{ github.base_ref }}
       head-sha: ${{ github.event.pull_request.head.sha }}
@@ -85,7 +85,7 @@ jobs:
     if: always() && github.event_name == 'push' && contains(needs.*.result, 'failure')
     permissions:
       issues: write
-    uses: promontory-studio/pedalion/.github/workflows/notify-failure.yml@e4e338d845be827465c177aefed794a2566af1cb
+    uses: promontory-studio/pedalion/.github/workflows/notify-failure.yml@0185de09d9447da6d439a1f0823c1631a5c0eb25 # v1.0.0
     with:
       title: CI failed on main
       context: A push to main did not build, test or release, so the published package no longer matches main.
