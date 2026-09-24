@@ -30,7 +30,7 @@ jobs:
     with:
       base-ref: ${{ github.base_ref }}
       head-sha: ${{ github.event.pull_request.head.sha }}
-      authors: plover-autopilot[bot],pedalion[bot],dependabot[bot]
+      authors: pedalion-ci[bot],dependabot[bot]
       pr-author: ${{ github.event.pull_request.user.login }}
 
   release:
