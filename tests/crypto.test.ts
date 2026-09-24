@@ -13,6 +13,9 @@ import {
   encryptVaultV2,
   decryptVaultV2,
   deriveAuthHash,
+  encryptBytes,
+  decryptBytes,
+  isHD1,
 } from "../crypto";
 
 const rand = (n: number) => globalThis.crypto.getRandomValues(new Uint8Array(n));
@@ -181,5 +184,64 @@ describe("deriveAuthHash", () => {
   it("returns a stable ~43-char base64url string, distinct from the KEK path", async () => {
     const hash = await deriveAuthHash("hunter2", rand(16));
     expect(hash).toMatch(/^[A-Za-z0-9_-]{40,44}$/);
+  });
+});
+
+// ── v3: the same envelope over opaque bytes ──────────────────────────────────
+// What the file-at-rest path needs from it: a PDF comes back byte-identical, a blob sealed to
+// someone else's key does not open, and v2 and v3 are never mistaken for one another.
+describe("HD1 v3 (bytes)", () => {
+  const pdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, ...rand(4096)]);
+
+  it("round-trips arbitrary bytes unchanged", async () => {
+    const dek = await generateDEK();
+    expect(await decryptBytes(await encryptBytes(pdf, dek), dek)).toEqual(pdf);
+  });
+
+  it("round-trips an empty payload", async () => {
+    const dek = await generateDEK();
+    expect(await decryptBytes(await encryptBytes(new Uint8Array(0), dek), dek)).toEqual(new Uint8Array(0));
+  });
+
+  it("writes an HD1 v3 header and hides the plaintext", async () => {
+    const blob = await encryptBytes(pdf, await generateDEK());
+    expect([blob[0], blob[1], blob[2], blob[3]]).toEqual([0x48, 0x44, 0x31, 3]);
+    // The decisive property for at-rest storage: the stored object is not the document.
+    expect(blob.slice(32, 36)).not.toEqual(pdf.slice(0, 4));
+    expect(blob.length).toBe(32 + pdf.length + 16); // header + ciphertext + GCM tag
+  });
+
+  it("refuses a wrong key rather than returning garbage", async () => {
+    const blob = await encryptBytes(pdf, await generateDEK());
+    await expect(decryptBytes(blob, await generateDEK())).rejects.toThrow(/wrong DEK or corrupt blob/);
+  });
+
+  it("refuses a tampered payload (the GCM tag is load-bearing)", async () => {
+    const dek = await generateDEK();
+    const blob = await encryptBytes(pdf, dek);
+    blob[40] ^= 0xff;
+    await expect(decryptBytes(blob, dek)).rejects.toThrow(/wrong DEK or corrupt blob/);
+  });
+
+  it("refuses a truncated blob and a non-HD1 blob", async () => {
+    const dek = await generateDEK();
+    await expect(decryptBytes(new Uint8Array(20), dek)).rejects.toThrow(/blob too short/);
+    await expect(decryptBytes(new Uint8Array(64), dek)).rejects.toThrow(/not an HD1 blob/);
+  });
+
+  it("keeps v2 and v3 unconfusable in both directions", async () => {
+    const dek = await generateDEK();
+    const v2 = await encryptVaultV2(sample, dek);
+    const v3 = await encryptBytes(pdf, dek);
+    await expect(decryptBytes(v2, dek)).rejects.toThrow(/expected HD1 v3, got version 2/);
+    await expect(decryptVaultV2(v3, dek)).rejects.toThrow(/expected HD1 v2, got version 3/);
+    await expect(decryptVault(v3, "pw")).rejects.toThrow(/v3 bytes blob/);
+  });
+
+  it("isHD1 separates a sealed object from plaintext, for a store mid-migration", async () => {
+    expect(isHD1(await encryptBytes(pdf, await generateDEK()))).toBe(true);
+    expect(isHD1(await encryptVaultV2(sample, await generateDEK()))).toBe(true);
+    expect(isHD1(pdf)).toBe(false);
+    expect(isHD1(new Uint8Array(4))).toBe(false); // shorter than a header
   });
 });

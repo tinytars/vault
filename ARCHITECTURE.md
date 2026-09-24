@@ -74,6 +74,25 @@ v2 separates *encrypting the data* from *granting access to it*:
    shared between principals, and revoking one principal's *future* access means deleting their
    wrapped-DEK row — it does not touch anyone else's.
 
+### HD1 v3 — the same envelope over opaque bytes
+
+```
+MAGIC(3) | VERSION(1)=3 | vaultKeyId(16) | iv(12) | ciphertext
+```
+
+Identical to v2 in every respect except the payload: v2 carries UTF-8 JSON, v3 carries raw bytes.
+It exists for payloads that are **already files** — a PDF, an image — which would otherwise have
+to be base64'd into v2's JSON at a 33% cost.
+
+`encryptBytes`/`decryptBytes` are the v3 pair. `isHD1(blob)` reads the magic alone and says whether
+an object is sealed at all, which is what a store migrating from plaintext to sealed objects needs
+while both formats are live.
+
+The natural shape for per-file encryption is one random content key per file, kept inside a v2
+vault blob that the file's owner already controls. The file is then sealed under a key that only a
+principal who can open that vault can recover, and re-keying the vault does not mean re-uploading
+the files.
+
 `vaultKeyId` is an opaque reference into the caller's own storage (a row ID, not key material)
 — resolving it to an actual wrapped DEK is the storage layer's job, not this module's.
 
