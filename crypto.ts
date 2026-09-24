@@ -58,6 +58,7 @@ export async function decryptVault<T = Record<string, unknown>>(blob: Uint8Array
   let o = MAGIC.length;
   const version = blob[o++];
   if (version === VERSION_V2) throw new Error("v2 envelope blob: open it with decryptVaultV2 and a DEK");
+  if (version === VERSION_BYTES) throw new Error("v3 bytes blob: open it with decryptBytes and a DEK");
   if (version !== VERSION) throw new Error(`unsupported version ${version}`);
   const salt = blob.slice(o, o + SALT_LEN); o += SALT_LEN;
   const iv = blob.slice(o, o + IV_LEN); o += IV_LEN;
@@ -80,6 +81,7 @@ export async function decryptVault<T = Record<string, unknown>>(blob: Uint8Array
 // re-wrap of the DEK rather than a shared secret.
 
 const VERSION_V2 = 2;
+const VERSION_BYTES = 3; // same envelope, opaque byte payload instead of UTF-8 JSON
 const KEYID_LEN = 16; // opaque per-vault key id, reserved for future re-key tracking
 const EC_PARAMS = { name: "ECDH", namedCurve: "P-256" } as const;
 
@@ -242,38 +244,71 @@ export async function unwrapDEKWithKek(blob: Uint8Array, kek: CryptoKey): Promis
   return subtle.importKey("raw", raw, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
 }
 
-// HD1 v2 blob: magic(3) + version=2(1) + vaultKeyId(16) + iv(12) + AES-GCM(DEK, JSON).
-// Header = 32 B, equal to v1, so the Functions' MIN_BYTES=32 + magic checks stay valid.
-export async function encryptVaultV2<T = Record<string, unknown>>(data: T, dek: CryptoKey): Promise<Uint8Array> {
+// HD1 v2/v3 blob: magic(3) + version(1) + vaultKeyId(16) + iv(12) + AES-GCM(DEK, payload).
+// Header = 32 B, equal to v1, so the Functions' MIN_BYTES=32 + magic checks stay valid for all three.
+//
+// The two differ only in what the payload is: v2 carries UTF-8 JSON, v3 carries opaque bytes. A
+// file routed through v2 would have to be base64'd into that JSON, which costs 33% — the difference
+// between a 24 MB upload cap and a 32 MB one. The version byte is what tells a reader which it holds,
+// so pack and unpack are written once here rather than per format.
+const HD1_HEADER_LEN = MAGIC.length + 1 + KEYID_LEN + IV_LEN;
+
+async function sealHD1(version: number, plaintext: Uint8Array, dek: CryptoKey): Promise<Uint8Array> {
   const vaultKeyId = globalThis.crypto.getRandomValues(new Uint8Array(KEYID_LEN));
   const iv = globalThis.crypto.getRandomValues(new Uint8Array(IV_LEN));
-  const plaintext = enc.encode(JSON.stringify(data));
   const ciphertext = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: toAB(iv) }, dek, toAB(plaintext)));
-  const out = new Uint8Array(MAGIC.length + 1 + KEYID_LEN + IV_LEN + ciphertext.length);
+  const out = new Uint8Array(HD1_HEADER_LEN + ciphertext.length);
   let o = 0;
   out.set(MAGIC, o); o += MAGIC.length;
-  out[o++] = VERSION_V2;
+  out[o++] = version;
   out.set(vaultKeyId, o); o += KEYID_LEN;
   out.set(iv, o); o += IV_LEN;
   out.set(ciphertext, o);
   return out;
 }
 
-export async function decryptVaultV2<T = Record<string, unknown>>(blob: Uint8Array, dek: CryptoKey): Promise<T> {
-  const header = MAGIC.length + 1 + KEYID_LEN + IV_LEN;
-  if (blob.length < header) throw new Error("blob too short");
+async function openHD1(blob: Uint8Array, version: number, label: string, dek: CryptoKey): Promise<Uint8Array> {
+  if (blob.length < HD1_HEADER_LEN) throw new Error("blob too short");
   for (let i = 0; i < MAGIC.length; i++) if (blob[i] !== MAGIC[i]) throw new Error("not an HD1 blob");
   let o = MAGIC.length;
-  const version = blob[o++];
-  if (version !== VERSION_V2) throw new Error(`expected HD1 v2, got version ${version}`);
+  const got = blob[o++];
+  if (got !== version) throw new Error(`expected HD1 ${label}, got version ${got}`);
   o += KEYID_LEN; // vaultKeyId — reserved/opaque
   const iv = blob.slice(o, o + IV_LEN); o += IV_LEN;
   const ciphertext = blob.slice(o);
-  let plaintext: ArrayBuffer;
   try {
-    plaintext = await subtle.decrypt({ name: "AES-GCM", iv: toAB(iv) }, dek, toAB(ciphertext));
+    return new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: toAB(iv) }, dek, toAB(ciphertext)));
   } catch {
     throw new Error("wrong DEK or corrupt blob");
   }
-  return JSON.parse(dec.decode(plaintext)) as T;
+}
+
+export async function encryptVaultV2<T = Record<string, unknown>>(data: T, dek: CryptoKey): Promise<Uint8Array> {
+  return sealHD1(VERSION_V2, enc.encode(JSON.stringify(data)), dek);
+}
+
+export async function decryptVaultV2<T = Record<string, unknown>>(blob: Uint8Array, dek: CryptoKey): Promise<T> {
+  return JSON.parse(dec.decode(await openHD1(blob, VERSION_V2, "v2", dek))) as T;
+}
+
+// v3 — the same envelope over a payload that is already a file (a PDF, an image), so it is sealed
+// as-is rather than base64'd through v2's JSON. Key handling and the GCM tag are identical to v2.
+export async function encryptBytes(data: Uint8Array, dek: CryptoKey): Promise<Uint8Array> {
+  return sealHD1(VERSION_BYTES, data, dek);
+}
+
+export async function decryptBytes(blob: Uint8Array, dek: CryptoKey): Promise<Uint8Array> {
+  return openHD1(blob, VERSION_BYTES, "v3", dek);
+}
+
+/**
+ * Whether `blob` carries the HD1 magic — one of this package's envelopes rather than plaintext.
+ *
+ * For a store migrating from plaintext to sealed objects, where a reader must accept both until the
+ * last plaintext object is gone. Cheap and total: it reads the magic, never the key.
+ */
+export function isHD1(blob: Uint8Array): boolean {
+  if (blob.length < HD1_HEADER_LEN) return false;
+  for (let i = 0; i < MAGIC.length; i++) if (blob[i] !== MAGIC[i]) return false;
+  return true;
 }

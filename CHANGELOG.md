@@ -7,6 +7,13 @@ semver, but is pre-1.0 — expect breaking changes between minor versions until 
 
 ### Added
 
+- `crypto.ts` — HD1 **v3**, the same authenticated envelope over an opaque byte payload instead of
+  UTF-8 JSON, for sealing payloads that are already files. `encryptBytes(data, dek)` /
+  `decryptBytes(blob, dek)`, plus `isHD1(blob)` for a store that must read plaintext and sealed
+  objects side by side while migrating between them. Header, key handling and GCM tag are
+  identical to v2; only the version byte and the payload codec differ, so `MIN_BYTES = 32` and
+  magic checks stay valid across all three versions.
+
 - `blob-store.ts` — `BlobStore`, a generic conditional-write interface for storing an opaque
   encrypted blob by key. Server-side counterpart to `vault-sink.ts`'s browser-side `VaultSink`.
 - `adapters/d1/` — `D1AccountStore`/`D1CredentialStore`/`D1EnvelopeStore`/`D1ProviderLinkStore`/
