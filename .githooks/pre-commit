@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Thin shim: the shared size/agent-memory/credentials guards live in plover-context, never copied here.
+# Opt in with `git config core.hooksPath .githooks`; external contributors are unaffected.
+# Which checkout of the hub this shim loads is the one thing it decides, because that choice precedes
+# reading anything from it — a derivation inside guards.sh cannot pick the guards.sh that runs. So it asks
+# git which worktree holds main rather than trusting $HOME/.claude outright: that checkout does hold main
+# (since 2026-09-25) and normally answers itself, but a hub parked on a branch froze every repo's chain at
+# whatever policy that branch carried. A single-tree clone has no worktree holding main and resolves to itself.
+HUB="${PLOVER_CONTEXT_DIR:-$HOME/.claude}"
+live=""
+if [ -z "${PLOVER_GIT_HOOKS:-}" ]; then
+  # env -u: git exports GIT_DIR to the hooks of a linked worktree, and GIT_DIR wins over -C, so without
+  # this the question asked is which of the COMMITTING repo's worktrees holds main.
+  live="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$HUB" worktree list --porcelain 2>/dev/null |
+    awk '/^worktree /{w=substr($0,10)} /^branch refs\/heads\/main$/{print w; exit}')"
+fi
+GUARD="${PLOVER_GIT_HOOKS:-${live:-$HUB}/infra/git-hooks}/guards.sh"
+
+if [ ! -x "$GUARD" ]; then
+  # Fail closed. Skipping silently is the exact failure these guards exist to prevent: an oversized blob
+  # or a stray secret reaching history, which then costs a rewrite to undo.
+  echo "pre-commit: shared guards not found at $GUARD"
+  echo "pre-commit:   clone pablo-tech/plover-context to ~/.claude, or set PLOVER_GIT_HOOKS."
+  echo "pre-commit: (bypass: git commit --no-verify)"
+  exit 1
+fi
+
+exec "$GUARD"
