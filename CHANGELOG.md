@@ -72,11 +72,11 @@ version; no prior published releases.
   `resolveEnvelopeAccess`'s owner/org-recovery/provider-link decision paths, and
   `break-glass.ts`'s TTL-clamp/expiry/idempotent-revoke logic.
 
-### Known gaps (tracked, not blocking this release)
+### Known gaps — tracked, not blocking this release
 
 - No forward secrecy on revoke — see `THREAT_MODEL.md`.
 
-### Known gaps, not silently dropped
+### Known gaps — not silently dropped
 
 - The D1/R2 adapters' real conditional-write/transaction semantics are verified against real
   `workerd` only in a Cloudflare-hosted adopter's own test suite, not in this package's `npm
